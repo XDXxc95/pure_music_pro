@@ -54,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -314,10 +315,13 @@ fun MainScreen(viewModel: PlayerViewModel, window: Window) {
             }
 
             if (showWhatsNew) {
-                GlassDialog(onDismissRequest = {
-                    com.music.purelymusic.utils.PreferencesManager.markReleaseNotesSeen(ReleaseNotes.version)
-                    showWhatsNew = false
-                }) {
+                GlassDialog(
+                    onDismissRequest = {
+                        com.music.purelymusic.utils.PreferencesManager.markReleaseNotesSeen(ReleaseNotes.version)
+                        showWhatsNew = false
+                    },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
                     // The dialog shares the activity page source for live glass blur.
                     WhatsNewSheet(language = viewModel.currentLanguage, onDismiss = {
                         com.music.purelymusic.utils.PreferencesManager.markReleaseNotesSeen(ReleaseNotes.version)
