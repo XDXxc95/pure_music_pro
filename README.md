@@ -90,7 +90,7 @@ Windows PowerShell：
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 ```
 
-其中 `assembleDebugAndroidTest` 只编译仪器测试，运行仪器测试需要已连接的设备或模拟器。仓库的 GitHub Actions 会在推送到 `main` 分支或创建 Pull Request 时执行单元测试、Android Lint 与 Debug 构建。
+其中 `assembleDebugAndroidTest` 只编译仪器测试，运行仪器测试需要已连接的设备或模拟器。仓库的 GitHub Actions 会在推送到 `main` 分支或创建 Pull Request 时执行单元测试、Android Lint 与 Debug 构建；构建通过后可在该次运行的 Artifacts 中下载 Debug APK、测试报告与 Lint 报告。
 
 ## 项目结构
 
