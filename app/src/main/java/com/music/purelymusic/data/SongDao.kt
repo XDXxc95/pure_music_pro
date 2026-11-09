@@ -29,6 +29,9 @@ interface SongDao {
     @Query("SELECT * FROM songs WHERE title = :title AND artist = :artist LIMIT 1")
     suspend fun findByTitleAndArtist(title: String, artist: String): SongEntity?
 
+    @Query("SELECT * FROM songs WHERE id = :id LIMIT 1")
+    suspend fun findById(id: Long): SongEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSong(song: SongEntity)
 

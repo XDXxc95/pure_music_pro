@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -77,6 +78,7 @@ fun HomeScreen(
     onNavigateToPlayer: () -> Unit,
     onPickFile: () -> Unit,
     onBatchPickFile: () -> Unit,
+    onBatchPickFolder: () -> Unit,
     onPickCover: () -> Unit,
     onPickLrc: () -> Unit,
     onNavigateToCreatePlaylist: () -> Unit
@@ -249,6 +251,11 @@ fun HomeScreen(
                             label = if (viewModel.currentLanguage == "zh") "批量导入" else "Batch Import",
                             icon = Icons.Default.LibraryMusic,
                             onClick = { showMenu = false; onBatchPickFile() }
+                        )
+                        GlassMenuItem(
+                            label = if (viewModel.currentLanguage == "zh") "导入文件夹" else "Import Folder",
+                            icon = Icons.Default.CreateNewFolder,
+                            onClick = { showMenu = false; onBatchPickFolder() }
                         )
                         GlassMenuItem(
                             label = if (viewModel.currentLanguage == "zh") "创建播放列表" else "Create Playlist",
@@ -802,7 +809,8 @@ fun BatchImportProgressDialog(
                 )
                 
                 Text(
-                    text = "$progress / $total",
+                    text = if (total > 0) "$progress / $total"
+                    else if (currentLanguage == "zh") "正在扫描…" else "Scanning…",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface

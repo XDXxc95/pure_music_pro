@@ -17,6 +17,7 @@
 package com.music.purelymusic
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -147,6 +148,21 @@ fun MainScreen(viewModel: PlayerViewModel, window: Window) {
     val isPrimaryRoute = currentRoute == "home" || currentRoute == "library" || currentRoute == "settings"
     var showWhatsNew by remember { mutableStateOf(com.music.purelymusic.utils.PreferencesManager.shouldShowReleaseNotes(ReleaseNotes.version)) }
     val context = LocalContext.current
+
+    // 文件夹导入选择器：递归导入文件夹内的音乐，并按子文件夹自动建歌单
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            viewModel.batchImportFolder(uri)
+        }
+    }
     var showOnboarding by remember { mutableStateOf(PreferencesManager.shouldShowOnboarding(context)) }
     val navigationHazeState = remember { HazeState() }
     val glassMenuHost = remember { GlassMenuHostState() }
@@ -181,6 +197,7 @@ fun MainScreen(viewModel: PlayerViewModel, window: Window) {
                         onNavigateToPlayer = { navController.navigate("player") },
                         onPickFile = { filePickerLauncher.launch("audio/*") },
                         onBatchPickFile = { batchFilePickerLauncher.launch(arrayOf("audio/*")) },
+                        onBatchPickFolder = { folderPickerLauncher.launch(null) },
                         onPickCover = { coverPickerLauncher.launch("image/*") },
                         onPickLrc = { lrcPickerLauncher.launch("*/*") },
                         onNavigateToCreatePlaylist = { navController.navigate("create_playlist") }
@@ -193,6 +210,7 @@ fun MainScreen(viewModel: PlayerViewModel, window: Window) {
                         bottomContentPadding = if (viewModel.currentSong != null) AppDimensions.miniPlayerHeight() + 100.dp else 88.dp,
                         onPickFile = { filePickerLauncher.launch("audio/*") },
                         onBatchPickFile = { batchFilePickerLauncher.launch(arrayOf("audio/*")) },
+                        onBatchPickFolder = { folderPickerLauncher.launch(null) },
                         onPickCover = { coverPickerLauncher.launch("image/*") },
                         onNavigateToCreatePlaylist = { navController.navigate("create_playlist") },
                         onNavigateToPlaylistDetail = { playlist ->

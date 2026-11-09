@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -84,6 +85,7 @@ fun LibraryScreen(
     bottomContentPadding: androidx.compose.ui.unit.Dp = 12.dp,
     onPickFile: () -> Unit,
     onBatchPickFile: () -> Unit,
+    onBatchPickFolder: () -> Unit,
     onPickCover: () -> Unit,
     onNavigateToCreatePlaylist: () -> Unit,
     onNavigateToPlaylistDetail: (Playlist) -> Unit,
@@ -556,6 +558,11 @@ fun LibraryScreen(
                             label = if (viewModel.currentLanguage == "zh") "批量导入" else "Batch Import",
                             icon = Icons.Default.LibraryMusic,
                             onClick = { showMenu = false; onBatchPickFile() }
+                        )
+                        GlassMenuItem(
+                            label = if (viewModel.currentLanguage == "zh") "导入文件夹" else "Import Folder",
+                            icon = Icons.Default.CreateNewFolder,
+                            onClick = { showMenu = false; onBatchPickFolder() }
                         )
                         GlassMenuItem(
                             label = if (viewModel.currentLanguage == "zh") "创建播放列表" else "Create Playlist",

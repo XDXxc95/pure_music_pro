@@ -26,6 +26,7 @@ import android.media.Spatializer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.compose.runtime.*
@@ -51,6 +52,7 @@ import com.music.purelymusic.data.toSongRefs
 import com.music.purelymusic.data.toAlbum
 import com.music.purelymusic.model.*
 import com.music.purelymusic.utils.LrcParser
+import com.music.purelymusic.utils.FolderImportSupport
 import com.music.purelymusic.utils.LyricTranslationParser
 import com.music.purelymusic.utils.NetworkAccess
 import com.music.purelymusic.utils.OfflineModeException
@@ -65,6 +67,9 @@ import java.io.File
 import java.nio.charset.Charset
 import kotlin.math.sin
 import java.util.Locale
+
+/** 文件夹导入时递归遍历的最大层级，防止异常目录结构导致无限递归 */
+private const val MAX_FOLDER_IMPORT_DEPTH = 12
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -676,8 +681,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val index: Int,
         val musicPath: String? = null,
         val title: String? = null,
-        val artist: String? = null
+        val artist: String? = null,
+        /** 文件夹导入时该文件所属子文件夹对应的歌单名，普通批量导入为 null */
+        val playlistName: String? = null
     )
+
+    // 文件夹导入：按歌单分组收集导入成功的歌曲
+    private var batchImportPendingPlaylistName: String? = null
+    private val batchImportPlaylistGroups = linkedMapOf<String, MutableList<Long>>()
+    private var batchImportRootFolderName: String? = null
+
+    /** 文件夹导入完成后的后台补全任务（补歌手/封面/歌词） */
+    private var folderEnrichmentJob: Job? = null
 
     // 保存歌曲错误状态
     var saveSongError by mutableStateOf<String?>(null)
@@ -1714,6 +1729,8 @@ private fun stop3DSurroundEffect() {
 
     override fun onCleared() {
         super.onCleared()
+        folderEnrichmentJob?.cancel()
+        folderEnrichmentJob = null
         blurBackgroundJob?.cancel()
         stop3DSurroundEffect()
         playbackRuntime.equalizer.removeListener(equalizerStateListener)
@@ -1755,14 +1772,345 @@ private fun stop3DSurroundEffect() {
      */
     fun batchImportSongs(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        if (isBatchImporting) return
 
-        // 初始化队列
-        batchImportQueue = uris.mapIndexed { index, uri ->
+        val items = uris.mapIndexed { index, uri ->
             BatchImportItem(uri = uri, index = index)
-        }.toMutableList()
+        }
+        startBatchImport(items, rootFolderName = null)
+    }
+
+    /**
+     * 导入一个文件夹：先快速扫描目录树，再把音乐文件直接登记进歌曲表。
+     *
+     * 文件夹导入拿到的是一棵被持久授权的 SAF 目录树（MainActivity 里已经 takePersistableUriPermission），
+     * 所以这里直接把 content:// 文档 URI 存成 musicUri，**不复制文件内容**——导入本质上只是建立一张映射表，
+     * 因此成千上万首也只需要几百毫秒。歌手、封面等细节在后台异步补全，不阻塞导入完成。
+     *
+     * @param treeUri 由 OpenDocumentTree 返回的目录 URI
+     */
+    fun batchImportFolder(treeUri: Uri) {
+        if (isBatchImporting) return
+        viewModelScope.launch {
+            batchImportPlaylistGroups.clear()
+            batchImportQueue.clear()
+            isBatchImporting = true
+            batchImportTotal = 0
+            batchImportProgress = 0
+            batchImportImported = 0
+            batchImportSkipped = 0
+            batchImportFailed = 0
+            batchImportSummary = null
+            batchImportPaused = false
+            batchImportCurrentSong = if (_currentLanguage == "zh") "正在扫描文件夹…" else "Scanning folder…"
+
+            val scanned = withContext(Dispatchers.IO) { scanFolderForAudioFiles(treeUri) }
+
+            if (scanned.isEmpty()) {
+                isBatchImporting = false
+                batchImportCurrentSong = null
+                batchImportSummary = if (_currentLanguage == "zh") {
+                    "该文件夹中没有找到可导入的音乐文件"
+                } else {
+                    "No importable music files found in this folder"
+                }
+                return@launch
+            }
+
+            batchImportRootFolderName = scanned.first().rootFolderName
+            batchImportTotal = scanned.size
+            batchImportCurrentSong =
+                if (_currentLanguage == "zh") "正在建立导入表…" else "Building import table…"
+
+            val entries = withContext(Dispatchers.IO) { registerFolderImportEntries(scanned) }
+            val playlistCount = persistFolderImportPlaylists()
+            val summary = buildBatchImportSummary(playlistCount, backgroundEnrichment = entries.isNotEmpty())
+            batchImportRootFolderName = null
+            refreshData()
+            isBatchImporting = false
+            batchImportCurrentSong = null
+            batchImportSummary = summary
+
+            if (entries.isNotEmpty()) enrichFolderImportEntries(entries)
+        }
+    }
+
+    private data class ScannedAudioFile(
+        val uri: Uri,
+        val displayName: String?,
+        val playlistName: String,
+        val rootFolderName: String
+    )
+
+    /** 已登记进歌曲表的文件夹导入项，用于后台补全歌手/封面 */
+    private data class FolderImportEntry(
+        val songId: Long,
+        val uri: Uri,
+        val title: String,
+        val playlistName: String
+    )
+
+    private data class LocalTagInfo(val title: String?, val artist: String?, val picture: ByteArray?)
+
+    /**
+     * 用 DocumentsContract 递归遍历目录树（不依赖 DocumentFile 库）。
+     * 返回按「歌单名 + 文件名」排序后的音频文件列表。
+     */
+    private fun scanFolderForAudioFiles(treeUri: Uri): List<ScannedAudioFile> {
+        val resolver = context.contentResolver
+        val rootFolderName = runCatching {
+            queryDocumentDisplayName(
+                DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri)
+                )
+            )
+        }.getOrNull()
+            ?: treeUri.lastPathSegment?.substringAfterLast(':').orEmpty().ifBlank { "Imported" }
+
+        val files = mutableListOf<ScannedAudioFile>()
+        val visitedDirectories = mutableSetOf<String>()
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        )
+
+        fun walk(directoryDocumentId: String, segments: List<String>, depth: Int) {
+            if (depth > MAX_FOLDER_IMPORT_DEPTH || !visitedDirectories.add(directoryDocumentId)) return
+            val childrenUri =
+                DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, directoryDocumentId)
+            try {
+                resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                    val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    if (idIndex < 0) return@use
+                    while (cursor.moveToNext()) {
+                        val documentId = cursor.getString(idIndex) ?: continue
+                        val displayName = if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                        val mimeType = if (mimeIndex >= 0) cursor.getString(mimeIndex) else null
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            walk(documentId, segments + (displayName ?: ""), depth + 1)
+                        } else if (
+                            FolderImportSupport.isAudioFileName(displayName) ||
+                            FolderImportSupport.isAudioMimeType(mimeType)
+                        ) {
+                            files += ScannedAudioFile(
+                                uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
+                                displayName = displayName,
+                                playlistName = FolderImportSupport.playlistNameFor(rootFolderName, segments),
+                                rootFolderName = rootFolderName
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("FolderImport", "遍历目录失败: $childrenUri -> ${e.message}")
+            }
+        }
+
+        try {
+            walk(DocumentsContract.getTreeDocumentId(treeUri), emptyList(), 0)
+        } catch (e: Exception) {
+            Log.e("FolderImport", "扫描文件夹失败: ${e.message}", e)
+        }
+        return files.sortedWith(compareBy({ it.playlistName }, { it.uri.lastPathSegment ?: "" }))
+    }
+
+    private fun queryDocumentDisplayName(uri: Uri): String? {
+        return try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 把扫描结果登记进歌曲表（导入表），不复制文件内容。
+     * 歌名一律取磁盘上的原始文件名（去掉扩展名），歌手先用占位值，稍后由 [enrichFolderImportEntries] 补全。
+     * @return 本次新增的条目，供后台补全使用
+     */
+    private suspend fun registerFolderImportEntries(scanned: List<ScannedAudioFile>): List<FolderImportEntry> {
+        val entries = mutableListOf<FolderImportEntry>()
+        val unknownArtist = localizedString(R.string.unknown_artist)
+
+        // 先按子文件夹把专辑准备好，避免在逐首插入时重复查询
+        val albumIds = mutableMapOf<String, String?>()
+        for (file in scanned) {
+            if (!albumIds.containsKey(file.playlistName)) {
+                albumIds[file.playlistName] =
+                    findOrCreateAlbumId(file.playlistName, null, unknownArtist, null)
+            }
+        }
+
+        for ((index, file) in scanned.withIndex()) {
+            batchImportProgress = index + 1
+            if (index % 20 == 0) {
+                batchImportCurrentSong = file.displayName
+                    ?: FolderImportSupport.titleFromFileName(file.displayName)
+            }
+            val musicUri = file.uri.toString()
+            val existing = songDao.findByMusicUri(musicUri)
+            if (existing != null) {
+                batchImportSkipped++
+                // 歌曲已在库中时仍然归入对应文件夹歌单，重复导入同一文件夹也能补齐歌单
+                recordImportedSong(file.playlistName, existing.id)
+                continue
+            }
+
+            val title = FolderImportSupport.titleFromFileName(file.displayName)
+            try {
+                val song = Song(
+                    id = 0,
+                    title = title,
+                    artist = unknownArtist,
+                    coverUri = null,
+                    musicUri = musicUri,
+                    lrcPath = null,
+                    album = file.playlistName,
+                    albumId = albumIds[file.playlistName]
+                )
+                songDao.insertSong(song.toEntity())
+                val songId = songDao.findByMusicUri(musicUri)?.id
+                if (songId == null) {
+                    batchImportFailed++
+                } else {
+                    batchImportImported++
+                    recordImportedSong(file.playlistName, songId)
+                    entries += FolderImportEntry(
+                        songId = songId,
+                        uri = file.uri,
+                        title = title,
+                        playlistName = file.playlistName
+                    )
+                }
+            } catch (e: Exception) {
+                batchImportFailed++
+                Log.e("FolderImport", "登记歌曲失败: $musicUri -> ${e.message}", e)
+            }
+        }
+        return entries
+    }
+
+    /**
+     * 导入完成后在后台补全：先读文件内嵌标签补歌手/封面，再（按设置）联网补封面与歌词。
+     * 全程不阻塞 UI，也不影响已经可以看到的歌单。
+     */
+    private fun enrichFolderImportEntries(entries: List<FolderImportEntry>) {
+        folderEnrichmentJob?.cancel()
+        folderEnrichmentJob = viewModelScope.launch(Dispatchers.IO) {
+            val fetchOnline = _autoFetchMetadata && !offlineMode
+            var updatedCount = 0
+            var pendingRefresh = 0
+            for (entry in entries) {
+                if (!isActive) break
+                try {
+                    val entity = songDao.findById(entry.songId) ?: continue
+                    var updated = entity
+
+                    val tags = readLocalTagInfo(entry.uri)
+                    if (tags != null) {
+                        val tagArtist = tags.artist?.trim()?.takeIf { it.isNotEmpty() }
+                        if (tagArtist != null && tagArtist != updated.artist) {
+                            updated = updated.copy(artist = tagArtist)
+                        }
+                        val picture = tags.picture
+                        if (updated.coverUri.isNullOrBlank() && picture != null) {
+                            val coverPath = fileStore.saveStream(
+                                java.io.ByteArrayInputStream(picture),
+                                "cov_${updated.id}_${System.currentTimeMillis()}.jpg",
+                                8L * 1024 * 1024
+                            )
+                            if (coverPath != null) updated = updated.copy(coverUri = coverPath)
+                        }
+                    }
+
+                    if (fetchOnline) {
+                        // 后台补全同样要做速率限制，但不再阻塞导入本身
+                        delay(250)
+                        // 联网检索用内嵌标签里的歌名更准；展示用的歌名仍然保持原始文件名
+                        val lookupTitle = tags?.title?.trim()?.takeIf { it.isNotEmpty() } ?: entry.title
+                        val (coverPath, lrcPath) = fetchAllFromNetwork(lookupTitle, updated.artist)
+                        if (!coverPath.isNullOrBlank() && coverPath != updated.coverUri) {
+                            updated = updated.copy(coverUri = coverPath)
+                        }
+                        if (!lrcPath.isNullOrBlank()) updated = updated.copy(lrcPath = lrcPath)
+                    }
+
+                    if (updated != entity) {
+                        songDao.updateSong(updated)
+                        updatedCount++
+                    }
+                    pendingRefresh++
+                    if (pendingRefresh >= 10) {
+                        pendingRefresh = 0
+                        withContext(Dispatchers.Main) { refreshData() }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("FolderImport", "补全歌曲信息失败: ${entry.title} -> ${e.message}")
+                }
+            }
+            if (updatedCount > 0) backfillFolderPlaylistCovers(entries)
+            withContext(Dispatchers.Main) { refreshData() }
+            Log.d("FolderImport", "后台补全完成: 更新 $updatedCount 首")
+        }
+    }
+
+    /** 补全完成后，给还没有封面的自动歌单挑一张歌曲封面。 */
+    private suspend fun backfillFolderPlaylistCovers(entries: List<FolderImportEntry>) {
+        val names = entries.map { it.playlistName }.distinct()
+        if (names.isEmpty()) return
+        try {
+            val playlistsByName = playlistDao.getAllPlaylists().map { it.toPlaylist() }.associateBy { it.name }
+            for (name in names) {
+                val playlist = playlistsByName[name] ?: continue
+                if (!playlist.coverUri.isNullOrBlank()) continue
+                val cover = playlist.songIds.firstNotNullOfOrNull { songDao.findById(it)?.coverUri } ?: continue
+                val updatedPlaylist = playlist.copy(coverUri = cover)
+                playlistDao.upsertPlaylist(updatedPlaylist.toEntity(), updatedPlaylist.toSongRefs())
+            }
+        } catch (e: Exception) {
+            Log.w("FolderImport", "补全歌单封面失败: ${e.message}")
+        }
+    }
+
+    /** 读本地音频标签：只取歌手和内嵌封面，读不到返回 null。 */
+    private suspend fun readLocalTagInfo(uri: Uri): LocalTagInfo? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)
+            LocalTagInfo(title = title, artist = artist, picture = retriever.embeddedPicture)
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    /**
+     * 统一入口：把待导入项放入队列并开始处理。
+     */
+    private fun startBatchImport(items: List<BatchImportItem>, rootFolderName: String?) {
+        batchImportQueue = items.toMutableList()
+        batchImportPlaylistGroups.clear()
+        batchImportRootFolderName = rootFolderName
 
         isBatchImporting = true
-        batchImportTotal = uris.size
+        batchImportTotal = items.size
         batchImportProgress = 0
         batchImportCurrentSong = null
         batchImportImported = 0
@@ -1770,8 +2118,8 @@ private fun stop3DSurroundEffect() {
         batchImportFailed = 0
         batchImportSummary = null
         batchImportPaused = false
+        batchImportPendingPlaylistName = null
 
-        // 开始处理队列
         processBatchImportQueue()
     }
 
@@ -1796,6 +2144,7 @@ private fun stop3DSurroundEffect() {
                         batchImportPaused = true
                         batchImportPendingUri = item.uri
                         batchImportPendingFileName = fileName
+                        batchImportPendingPlaylistName = item.playlistName
                         // 将项目放回队列开头
                         batchImportQueue.add(0, item)
                         return@launch
@@ -1810,6 +2159,7 @@ private fun stop3DSurroundEffect() {
                         batchImportPaused = true
                         batchImportPendingUri = item.uri
                         batchImportPendingFileName = fileName
+                        batchImportPendingPlaylistName = item.playlistName
                         // 将项目放回队列开头
                         batchImportQueue.add(0, item)
                         return@launch
@@ -1818,8 +2168,11 @@ private fun stop3DSurroundEffect() {
                     // 显示当前正在处理的歌曲
                     batchImportCurrentSong = title
 
-                    if (songDao.findByTitleAndArtist(title, artist) != null) {
+                    val existingSongId = songDao.findByTitleAndArtist(title, artist)?.id
+                    if (existingSongId != null) {
                         batchImportSkipped++
+                        // 歌曲已在库中时仍把它归入对应文件夹歌单，避免重复导入时歌单缺失
+                        recordImportedSong(item.playlistName, existingSongId)
                         continue
                     }
 
@@ -1830,8 +2183,9 @@ private fun stop3DSurroundEffect() {
                         if (songDao.findByMusicUri(pMusic) != null) {
                             batchImportSkipped++
                         } else {
-                            processBatchImportSong(title, artist, pMusic, item.index)
+                            val songId = processBatchImportSong(title, artist, pMusic, item.index)
                             batchImportImported++
+                            recordImportedSong(item.playlistName, songId)
                         }
                     } else {
                         Log.e("BatchImport", "复制音乐文件失败: ${item.uri}")
@@ -1845,11 +2199,14 @@ private fun stop3DSurroundEffect() {
 
             // 队列处理完成
             if (batchImportQueue.isEmpty()) {
+                val playlistCount = persistFolderImportPlaylists()
+                val summary = buildBatchImportSummary(playlistCount)
+                batchImportRootFolderName = null
                 refreshData()
                 isBatchImporting = false
                 batchImportCurrentSong = null
                 batchImportPaused = false
-                batchImportSummary = "导入完成：成功 $batchImportImported 首，跳过 $batchImportSkipped 首，失败 $batchImportFailed 首"
+                batchImportSummary = summary
             }
         }
     }
@@ -1857,7 +2214,7 @@ private fun stop3DSurroundEffect() {
     /**
      * 处理单首歌曲的导入（带元数据）
      */
-    private suspend fun processBatchImportSong(title: String, artist: String, musicPath: String, index: Int) {
+    private suspend fun processBatchImportSong(title: String, artist: String, musicPath: String, index: Int): Long? {
         var pCover: String? = null
         var pLrc: String? = null
         var albumName: String? = null
@@ -1901,6 +2258,77 @@ private fun stop3DSurroundEffect() {
             listOf(musicPath, pCover, pLrc).forEach(fileStore::deleteOwnedFile)
             throw error
         }
+        // Room 的 @Insert 不返回自增 id，这里按音乐文件路径回查，用于加入自动生成的歌单
+        return songDao.findByMusicUri(musicPath)?.id
+    }
+
+    /** 记录导入成功的歌曲，稍后按文件夹归入对应歌单 */
+    private fun recordImportedSong(playlistName: String?, songId: Long?) {
+        if (playlistName.isNullOrBlank() || songId == null) return
+        batchImportPlaylistGroups.getOrPut(playlistName) { mutableListOf() }.add(songId)
+    }
+
+    /**
+     * 按文件夹把本次导入成功的歌曲写入播放列表。
+     * 同名歌单已存在时追加歌曲（不重复创建），不存在时新建。
+     * @return 新建/更新的歌单数量
+     */
+    private suspend fun persistFolderImportPlaylists(): Int {
+        if (batchImportPlaylistGroups.isEmpty()) return 0
+        val groups = batchImportPlaylistGroups.mapValues { (_, ids) -> ids.distinct() }
+        batchImportPlaylistGroups.clear()
+
+        var updatedCount = 0
+        try {
+            val existingPlaylists = playlistDao.getAllPlaylists().map { it.toPlaylist() }
+            val now = System.currentTimeMillis()
+            for ((name, songIds) in groups) {
+                if (songIds.isEmpty()) continue
+                val existing = existingPlaylists.firstOrNull { it.name == name }
+                val firstCover = songIds.firstNotNullOfOrNull { songDao.findById(it)?.coverUri }
+                val playlist = if (existing != null) {
+                    existing.copy(
+                        songIds = (existing.songIds + songIds).distinct(),
+                        coverUri = existing.coverUri ?: firstCover,
+                        updatedAt = now
+                    )
+                } else {
+                    Playlist(
+                        name = name,
+                        coverUri = firstCover,
+                        songIds = songIds,
+                        description = null,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+                playlistDao.upsertPlaylist(playlist.toEntity(), playlist.toSongRefs())
+                updatedCount++
+            }
+            Log.d("FolderImport", "自动生成/更新歌单 $updatedCount 个")
+        } catch (e: Exception) {
+            Log.e("FolderImport", "生成播放列表失败: ${e.message}", e)
+        }
+        return updatedCount
+    }
+
+    private fun buildBatchImportSummary(playlistCount: Int, backgroundEnrichment: Boolean = false): String {
+        return if (batchImportRootFolderName != null) {
+            val note = if (backgroundEnrichment) {
+                if (_currentLanguage == "zh") "，正在后台补全歌手与封面" else ", fetching artists and covers in background"
+            } else {
+                ""
+            }
+            if (_currentLanguage == "zh") {
+                "导入完成：新增 $batchImportImported 首，跳过 $batchImportSkipped 首，失败 $batchImportFailed 首" +
+                    "，已按文件夹生成 $playlistCount 个播放列表$note"
+            } else {
+                "Import complete: $batchImportImported added, $batchImportSkipped skipped, " +
+                    "$batchImportFailed failed, $playlistCount playlist(s) created from folders$note"
+            }
+        } else {
+            "导入完成：成功 $batchImportImported 首，跳过 $batchImportSkipped 首，失败 $batchImportFailed 首"
+        }
     }
 
     /**
@@ -1910,6 +2338,7 @@ private fun stop3DSurroundEffect() {
     fun continueBatchImport(title: String, artist: String) {
         val musicPath = batchImportPendingMusicPath
         val uri = batchImportPendingUri
+        val playlistName = batchImportPendingPlaylistName
         val index = batchImportTotal - batchImportQueue.size - 1
 
         viewModelScope.launch {
@@ -1919,6 +2348,7 @@ private fun stop3DSurroundEffect() {
                 batchImportPendingUri = null
                 batchImportPendingFileName = null
                 batchImportPendingMusicPath = null
+                batchImportPendingPlaylistName = null
                 if (batchImportQueue.isNotEmpty()) batchImportQueue.removeAt(0)
                 processBatchImportQueue()
                 return@launch
@@ -1965,6 +2395,10 @@ private fun stop3DSurroundEffect() {
                         songDao.insertSong(newSong.toEntity())
                     }
                     batchImportImported++
+                    recordImportedSong(
+                        playlistName,
+                        pMusic?.let { songDao.findByMusicUri(it)?.id }
+                    )
                     Log.d("BatchImport", "成功导入歌曲: $title")
                 } catch (error: Exception) {
                     listOf(pMusic, pCover, pLrc).forEach(fileStore::deleteOwnedFile)
@@ -1980,6 +2414,7 @@ private fun stop3DSurroundEffect() {
             batchImportPendingUri = null
             batchImportPendingFileName = null
             batchImportPendingMusicPath = null
+            batchImportPendingPlaylistName = null
 
             // 从队列中移除已处理的项目
             if (batchImportQueue.isNotEmpty()) {
@@ -1999,6 +2434,7 @@ private fun stop3DSurroundEffect() {
         batchImportPendingUri = null
         batchImportPendingFileName = null
         batchImportPendingMusicPath = null
+        batchImportPendingPlaylistName = null
 
         // 从队列中移除跳过的项目
         if (batchImportQueue.isNotEmpty()) {
@@ -2014,6 +2450,11 @@ private fun stop3DSurroundEffect() {
      */
     fun cancelBatchImport() {
         batchImportQueue.clear()
+        batchImportPlaylistGroups.clear()
+        batchImportPendingPlaylistName = null
+        batchImportRootFolderName = null
+        folderEnrichmentJob?.cancel()
+        folderEnrichmentJob = null
         isBatchImporting = false
         batchImportPaused = false
         batchImportCurrentSong = null
