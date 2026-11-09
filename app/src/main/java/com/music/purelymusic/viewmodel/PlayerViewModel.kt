@@ -1839,7 +1839,8 @@ private fun stop3DSurroundEffect() {
         val uri: Uri,
         val displayName: String?,
         val playlistName: String,
-        val rootFolderName: String
+        val rootFolderName: String,
+        val lrcUri: Uri? = null
     )
 
     /** 已登记进歌曲表的文件夹导入项，用于后台补全歌手/封面 */
@@ -1881,6 +1882,9 @@ private fun stop3DSurroundEffect() {
             val childrenUri =
                 DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, directoryDocumentId)
             try {
+                val childDirectories = mutableListOf<Pair<String, String?>>()
+                val audioChildren = mutableListOf<Pair<String, String?>>()
+                val lrcChildren = mutableListOf<Pair<String, String?>>()
                 resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
                     val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                     val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
@@ -1891,19 +1895,36 @@ private fun stop3DSurroundEffect() {
                         val displayName = if (nameIndex >= 0) cursor.getString(nameIndex) else null
                         val mimeType = if (mimeIndex >= 0) cursor.getString(mimeIndex) else null
                         if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                            walk(documentId, segments + (displayName ?: ""), depth + 1)
+                            childDirectories += documentId to displayName
                         } else if (
                             FolderImportSupport.isAudioFileName(displayName) ||
                             FolderImportSupport.isAudioMimeType(mimeType)
                         ) {
-                            files += ScannedAudioFile(
-                                uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
-                                displayName = displayName,
-                                playlistName = FolderImportSupport.playlistNameFor(rootFolderName, segments),
-                                rootFolderName = rootFolderName
-                            )
+                            audioChildren += documentId to displayName
+                        } else if (FolderImportSupport.isLrcFileName(displayName)) {
+                            lrcChildren += documentId to displayName
                         }
                     }
+                }
+
+                // 同目录下的歌词文件与音频文件按文件名配对（晴天.mp3 ↔ 晴天.lrc）
+                for ((documentId, displayName) in audioChildren) {
+                    val lrcDocumentId = lrcChildren.firstOrNull { (_, lrcName) ->
+                        FolderImportSupport.lrcMatchesAudio(displayName, lrcName)
+                    }?.first
+                    files += ScannedAudioFile(
+                        uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
+                        displayName = displayName,
+                        playlistName = FolderImportSupport.playlistNameFor(rootFolderName, segments),
+                        rootFolderName = rootFolderName,
+                        lrcUri = lrcDocumentId?.let {
+                            DocumentsContract.buildDocumentUriUsingTree(treeUri, it)
+                        }
+                    )
+                }
+
+                for ((documentId, displayName) in childDirectories) {
+                    walk(documentId, segments + (displayName ?: ""), depth + 1)
                 }
             } catch (e: Exception) {
                 Log.w("FolderImport", "遍历目录失败: $childrenUri -> ${e.message}")
@@ -1959,11 +1980,16 @@ private fun stop3DSurroundEffect() {
                     ?: FolderImportSupport.titleFromFileName(file.displayName)
             }
             val musicUri = file.uri.toString()
+            val lrcUriString = file.lrcUri?.toString()
             val existing = songDao.findByMusicUri(musicUri)
             if (existing != null) {
                 batchImportSkipped++
                 // 歌曲已在库中时仍然归入对应文件夹歌单，重复导入同一文件夹也能补齐歌单
                 recordImportedSong(file.playlistName, existing.id)
+                // 之前导入时还没有歌词文件的话，这次扫描到的同目录歌词也一并补上
+                if (existing.lrcPath.isNullOrBlank() && !lrcUriString.isNullOrBlank()) {
+                    runCatching { songDao.updateSong(existing.copy(lrcPath = lrcUriString)) }
+                }
                 continue
             }
 
@@ -1975,7 +2001,7 @@ private fun stop3DSurroundEffect() {
                     artist = unknownArtist,
                     coverUri = null,
                     musicUri = musicUri,
-                    lrcPath = null,
+                    lrcPath = lrcUriString,
                     album = file.playlistName,
                     albumId = albumIds[file.playlistName]
                 )
@@ -2043,7 +2069,10 @@ private fun stop3DSurroundEffect() {
                         if (!coverPath.isNullOrBlank() && coverPath != updated.coverUri) {
                             updated = updated.copy(coverUri = coverPath)
                         }
-                        if (!lrcPath.isNullOrBlank()) updated = updated.copy(lrcPath = lrcPath)
+                        // 同目录已带 .lrc 时保留本地歌词，避免被联网结果覆盖
+                        if (!lrcPath.isNullOrBlank() && updated.lrcPath.isNullOrBlank()) {
+                            updated = updated.copy(lrcPath = lrcPath)
+                        }
                     }
 
                     if (updated != entity) {

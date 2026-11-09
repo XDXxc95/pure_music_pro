@@ -49,6 +49,30 @@ object FolderImportSupport {
         return withoutExtension.trim().ifEmpty { name }
     }
 
+    /** 是否为 LRC 歌词文件（扩展名为 .lrc，大小写不敏感）。 */
+    fun isLrcFileName(fileName: String?): Boolean = extensionOf(fileName) == "lrc"
+
+    /**
+     * 判断歌词文件是否属于某个音频文件（同目录同名是最常见的整理方式）：
+     * `晴天.mp3` 对应 `晴天.lrc`，也兼容 `晴天.mp3.lrc` 这种写法。
+     * 比较时忽略大小写与首尾空白。
+     */
+    fun lrcMatchesAudio(audioFileName: String?, lrcFileName: String?): Boolean {
+        val lrc = lrcFileName?.trim()?.lowercase().orEmpty()
+        if (!isLrcFileName(lrc)) return false
+        val lrcBase = lrc.removeSuffix(".lrc")
+        if (lrcBase.isEmpty()) return false
+        val audio = audioFileName?.trim()?.lowercase().orEmpty()
+        if (audio.isEmpty()) return false
+        val extension = extensionOf(audio)
+        val audioBase = if (extension in AUDIO_EXTENSIONS && audio.length > extension.length + 1) {
+            audio.dropLast(extension.length + 1)
+        } else {
+            audio
+        }
+        return lrcBase == audioBase || lrcBase == audio
+    }
+
     fun isAudioMimeType(mimeType: String?): Boolean {
         val mime = mimeType?.lowercase() ?: return false
         return mime.startsWith("audio/") || mime == "application/ogg" || mime == "application/x-ogg"

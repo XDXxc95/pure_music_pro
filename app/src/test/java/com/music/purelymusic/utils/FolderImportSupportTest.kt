@@ -71,4 +71,27 @@ class FolderImportSupportTest {
         assertEquals("Untitled", FolderImportSupport.titleFromFileName(null))
         assertEquals("Untitled", FolderImportSupport.titleFromFileName("   "))
     }
+
+    @Test
+    fun `recognises lrc files`() {
+        assertTrue(FolderImportSupport.isLrcFileName("晴天.lrc"))
+        assertTrue(FolderImportSupport.isLrcFileName("TRACK.LRC"))
+        assertFalse(FolderImportSupport.isLrcFileName("晴天.mp3"))
+        assertFalse(FolderImportSupport.isLrcFileName("lrc"))
+        assertFalse(FolderImportSupport.isLrcFileName(null))
+    }
+
+    @Test
+    fun `matches lyric file sitting next to its audio file`() {
+        assertTrue(FolderImportSupport.lrcMatchesAudio("晴天.mp3", "晴天.lrc"))
+        assertTrue(FolderImportSupport.lrcMatchesAudio("01 - Intro.flac", "01 - intro.LRC"))
+        assertTrue(FolderImportSupport.lrcMatchesAudio("Song.2019.m4a", "Song.2019.lrc"))
+        assertTrue(FolderImportSupport.lrcMatchesAudio("track", "track.lrc"))
+        // 有些整理方式把扩展名也写进歌词文件名
+        assertTrue(FolderImportSupport.lrcMatchesAudio("晴天.mp3", "晴天.mp3.lrc"))
+        assertFalse(FolderImportSupport.lrcMatchesAudio("晴天.mp3", "雨天.lrc"))
+        assertFalse(FolderImportSupport.lrcMatchesAudio("晴天.mp3", "晴天.txt"))
+        assertFalse(FolderImportSupport.lrcMatchesAudio(null, "晴天.lrc"))
+        assertFalse(FolderImportSupport.lrcMatchesAudio("晴天.mp3", null))
+    }
 }
