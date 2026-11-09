@@ -1,4 +1,4 @@
-//Copyright (c) [2026] [eason204646]
+﻿//Copyright (c) [2026] [eason204646]
 //[purelymusic] is licensed under Mulan PSL v2.
 //You can use this software according to the terms and conditions of the Mulan
 //PSL v2.
@@ -38,6 +38,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
@@ -65,6 +66,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.nio.charset.Charset
+import kotlin.math.abs
 import kotlin.math.sin
 import java.util.Locale
 
@@ -440,6 +442,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         exoPlayer?.removeListener(playerListener)
         exoPlayer = player
         player.addListener(playerListener)
+        applyPlaybackSpeed(player)
         player.currentMediaItem?.mediaId?.toLongOrNull()?.let { songId ->
             if (currentSong?.id != songId) {
                 (currentPlayingList.firstOrNull { it.id == songId }
@@ -604,6 +607,45 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _playMode = value
             configurePlayMode(getOrCreatePlayer())
         }
+
+    companion object {
+        /** 可选的播放倍速 */
+        val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
+    }
+
+    // 播放倍速（1f 为原速），跨曲目与重启保持
+    private var _playbackSpeed by mutableFloatStateOf(1f)
+    var playbackSpeed: Float
+        get() = _playbackSpeed
+        private set(value) {
+            _playbackSpeed = value
+        }
+
+    /** 用于界面显示的倍速文本，例如 "1×"、"1.25×" */
+    val playbackSpeedLabel: String get() = formatPlaybackSpeed(_playbackSpeed)
+
+    fun selectPlaybackSpeed(speed: Float) {
+        val snapped = PLAYBACK_SPEEDS.minByOrNull { abs(it - speed) } ?: 1f
+        _playbackSpeed = snapped
+        com.music.purelymusic.utils.PreferencesManager.savePlaybackSpeed(snapped)
+        applyPlaybackSpeed(exoPlayer)
+    }
+
+    private fun applyPlaybackSpeed(player: ExoPlayer?) {
+        if (player == null) return
+        val speed = _playbackSpeed
+        if (player.playbackParameters.speed == speed && player.playbackParameters.pitch == 1f) return
+        player.playbackParameters = PlaybackParameters(speed)
+    }
+
+    private fun formatPlaybackSpeed(speed: Float): String {
+        val text = if (speed % 1f == 0f) {
+            speed.toInt().toString()
+        } else {
+            speed.toString().trimEnd('0').trimEnd('.')
+        }
+        return "${text}×"
+    }
 
     // 环绕音状态
     enum class SurroundMode {
@@ -864,6 +906,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             com.music.purelymusic.utils.PreferencesManager.saveCrossfadeEnabled(false)
         }
         _equalizerEnabled = com.music.purelymusic.utils.PreferencesManager.getEqualizerEnabled()
+        _playbackSpeed = com.music.purelymusic.utils.PreferencesManager.getPlaybackSpeed()
         playbackRuntime.configureCrossfade(_crossfadeEnabled, _crossfadeDurationSeconds)
         playbackRuntime.configureAutoMix(_autoMixEnabled)
         sleepTimerMinutes = playbackRuntime.sleepTimerDurationMinutes
@@ -871,6 +914,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         sleepTimerActive = sleepTimerRemainingSeconds > 0
 
         exoPlayer?.addListener(playerListener)
+        applyPlaybackSpeed(exoPlayer)
         playbackRuntime.addPlayerChangeListener(runtimePlayerChangeListener)
         playbackRuntime.addTransitionListener(runtimeTransitionListener)
         playbackRuntime.equalizer.addListener(equalizerStateListener)

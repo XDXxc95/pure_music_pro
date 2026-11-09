@@ -53,6 +53,7 @@ object PreferencesManager {
 
     // 均衡器开关
     private const val KEY_EQUALIZER_ENABLED = "equalizer_enabled"
+    private const val KEY_PLAYBACK_SPEED = "playback_speed"
     private const val KEY_LAST_SEEN_RELEASE_NOTES = "last_seen_release_notes"
     private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
     
@@ -203,6 +204,20 @@ object PreferencesManager {
 
     fun saveEqualizerEnabled(enabled: Boolean) {
         prefs?.edit()?.putBoolean(KEY_EQUALIZER_ENABLED, enabled)?.apply()
+    }
+
+    /**
+     * 获取播放倍速（1.0 表示原速）
+     */
+    fun getPlaybackSpeed(): Float {
+        return prefs?.getFloat(KEY_PLAYBACK_SPEED, 1f) ?: 1f
+    }
+
+    /**
+     * 保存播放倍速
+     */
+    fun savePlaybackSpeed(speed: Float) {
+        prefs?.edit()?.putFloat(KEY_PLAYBACK_SPEED, speed)?.apply()
     }
 
     /** A versioned key makes the update sheet appear exactly once after each app update. */

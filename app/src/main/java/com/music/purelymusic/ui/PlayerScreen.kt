@@ -203,10 +203,12 @@ fun PlayerScreen(
                         colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(formatTime(viewModel.currentPosition), color = Color.White.copy(alpha = 0.6f), fontSize = AppDimensions.textS().value.sp)
                         Spacer(modifier = Modifier.weight(1f))
                         Text(formatTime(viewModel.duration), color = Color.White.copy(alpha = 0.6f), fontSize = AppDimensions.textS().value.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        PlaybackSpeedControl(viewModel)
                     }
 
                     Spacer(modifier = Modifier.height(AppDimensions.spacingM()))
@@ -458,10 +460,12 @@ fun PlayerScreen(
                         colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = 0.24f)),
                         modifier = Modifier.height(24.dp)
                     )
-                    Row(modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(formatTime(viewModel.currentPosition), color = Color.White.copy(alpha = 0.6f), fontSize = AppDimensions.textS().value.sp)
                         Spacer(modifier = Modifier.weight(1f))
                         Text(formatTime(viewModel.duration), color = Color.White.copy(alpha = 0.6f), fontSize = AppDimensions.textS().value.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        PlaybackSpeedControl(viewModel)
                     }
                 }
 
@@ -533,9 +537,66 @@ fun PlayerScreen(
     }
 }
 
+/** 播放倍速入口：显示当前倍速，点击弹出 0.5× ~ 3× 选择菜单。 */
 @Composable
-private fun AutoMixIndicator(viewModel: PlayerViewModel) {
-    AnimatedVisibility(
+private fun PlaybackSpeedControl(viewModel: PlayerViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = viewModel.playbackSpeed
+    val changed = current != 1f
+    val description = if (viewModel.currentLanguage == "zh") "播放速度" else "Playback speed"
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = if (changed) 0.24f else 0.12f))
+                .clickable { expanded = true }
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Speed,
+                contentDescription = description,
+                tint = if (changed) Color.White else Color.White.copy(alpha = 0.75f),
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = viewModel.playbackSpeedLabel,
+                color = if (changed) Color.White else Color.White.copy(alpha = 0.75f),
+                fontSize = AppDimensions.textS().value.sp,
+                fontWeight = if (changed) FontWeight.Bold else FontWeight.Medium
+            )
+        }
+        GlassDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            PlayerViewModel.PLAYBACK_SPEEDS.forEach { speed ->
+                val selected = speed == current
+                GlassMenuItem(
+                    label = formatPlaybackSpeedLabel(speed),
+                    icon = if (selected) Icons.Default.Check else Icons.Default.Timer,
+                    onClick = {
+                        viewModel.selectPlaybackSpeed(speed)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun formatPlaybackSpeedLabel(speed: Float): String {
+    val text = if (speed % 1f == 0f) {
+        speed.toInt().toString()
+    } else {
+        speed.toString().trimEnd('0').trimEnd('.')
+    }
+    return "${text}×"
+}
+
+@Composable
+private fun AutoMixIndicator(viewModel: PlayerViewModel) {    AnimatedVisibility(
         visible = viewModel.isAutoMixTransitioning,
         enter = fadeIn(animationSpec = tween(180)),
         exit = fadeOut(animationSpec = tween(180))
