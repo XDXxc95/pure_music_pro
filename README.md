@@ -35,6 +35,12 @@ Purely Music 是一款开源 Android 本地音乐播放器：导入设备中的�
 
 文件夹导入按扩展名或 MIME 类型识别音频，覆盖 `mp3`、`flac`、`m4a`、`m4b`、`aac`、`wav`、`ogg`、`opus`、`ape`、`wma`、`amr`、`3gp`、`3g2`、`mka`、`mp4`、`mp2`、`mpga`、`aif`、`aiff`、`alac`、`wv`、`dsf`、`dff` 等常见格式。实际播放能力取决于系统解码器与内置的 FFmpeg 解码组件。
 
+## 获取应用
+
+前往本仓库的 [Releases](https://github.com/XDXxc95/pure_music_pro/releases/latest) 下载 `purelymusic.apk`，要求 **Android 8.0（API 26）或更高版本**。
+
+该安装包为 debug 签名构建，与官方版本的签名不同，安装前需要先卸载已安装的官方版本；安装包内不含任何联网服务密钥。
+
 ## 环境要求
 
 - JDK 17
