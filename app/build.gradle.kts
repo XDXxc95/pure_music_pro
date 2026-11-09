@@ -31,8 +31,8 @@ android {
         applicationId = "com.music.purelymusic"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "3.0"
+        versionCode = 31
+        versionName = "3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -78,7 +78,11 @@ android {
     applicationVariants.all {
         outputs.all {
             val output = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
-            output.outputFileName = "purelymusic.apk"
+            output.outputFileName = if (buildType.name == "release") {
+                "purelymusic-${versionName}-release.apk"
+            } else {
+                "purelymusic.apk"
+            }
         }
     }
 

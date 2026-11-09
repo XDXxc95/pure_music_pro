@@ -28,9 +28,14 @@
 7. **新增播放倍速选择**
    - 全屏播放器的进度条右侧新增倍速按钮，支持 `0.5×`、`0.75×`、`1×`、`1.25×`、`1.5×`、`2×`、`3×` 七档速度。
    - 倍速通过 `ExoPlayer` 的 `PlaybackParameters` 设置（音调不变），并持久化到本地设置，切歌与重启应用后保持；AutoMix 与交叉淡入淡出在非 `1×` 时暂不触发。
-8. **相关新增代码与测试**
+8. **应用名、版本号与 Release 打包**
+   - 桌面与应用内名称改为 **Purely Music+**（`app_name`，中英文资源同步）；应用包名 `com.music.purelymusic` 保持不变。
+   - 版本号更新为 `versionName "3.1"` / `versionCode 31`；更新亮点页（`ui/ReleaseNotes.kt`）同步改为 3.1 的内容。
+   - 配置 Release 正式签名（读取根目录 `keystore.properties`，该文件不入库）与 R8 压缩；Release 产物命名为 `purelymusic-<版本号>-release.apk`，Debug 产物保持 `purelymusic.apk`。
+9. **相关新增代码与测试**
    - `utils/FolderImportSupport.kt`：音频文件识别、文件名转歌名、播放列表命名规则、歌词文件配对规则。
    - `data/SongDao.kt`：新增按主键查询歌曲。
    - `app/src/test/.../FolderImportSupportTest.kt`：对应的单元测试。
+   - `utils/PreferencesManager.kt` / `viewmodel/PlayerViewModel.kt` / `ui/PlayerScreen.kt`：播放倍速的持久化、状态与界面。
 
 修改者 / Modified by: XDXxc95

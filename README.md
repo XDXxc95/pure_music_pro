@@ -6,7 +6,7 @@
 
 Purely Music 是一款开源 Android 本地音乐播放器：导入设备中的音乐，整理专辑与播放列表，跟随同步歌词聆听，并按自己的喜好调整播放衔接与声音效果。
 
-> **本仓库是上游项目 [Purely Music](https://github.com/eason204646-droid/Purely-Music) 的修改版本（fork）**，基于上游 `3.0`（`versionCode 30`）源码修改，遵循 [木兰宽松许可证，第 2 版（Mulan PSL v2）](LICENSE) 发布。全部修改内容记录在 [NOTICE.md](NOTICE.md)。
+> **本仓库是上游项目 [Purely Music](https://github.com/eason204646-droid/Purely-Music) 的修改版本（fork）**，基于上游 `3.0`（`versionCode 30`）源码修改，本分支版本号为 `3.1`（`versionCode 31`），应用名为 **Purely Music+**，遵循 [木兰宽松许可证，第 2 版（Mulan PSL v2）](LICENSE) 发布。全部修改内容记录在 [NOTICE.md](NOTICE.md)。
 
 ## 本版本相对上游的修改
 
@@ -19,6 +19,7 @@ Purely Music 是一款开源 Android 本地音乐播放器：导入设备中的�
 | **识别同目录歌词** | 音频文件旁若放着同名 `.lrc` 歌词（`晴天.mp3` ↔ `晴天.lrc`，也支持 `晴天.mp3.lrc`），导入时直接作为该歌曲歌词，无需联网获取，也不会被联网结果覆盖。 |
 | **后台补全元数据** | 导入完成即可使用，歌手、封面与歌词在后台读取内嵌标签并按设置异步联网补全，不阻塞导入流程。 |
 | **播放倍速**（新增） | 全屏播放器的进度条右侧新增倍速按钮，支持 `0.5×`、`0.75×`、`1×`、`1.25×`、`1.5×`、`2×`、`3×` 七档；音调保持不变，设置持久化保存。 |
+| **应用名与版本**（新增） | 桌面与应用内名称改为 **Purely Music+**，版本号 `3.1`（`versionCode 31`）；Release 构建启用正式签名，安装包经过 R8 压缩。 |
 
 单曲导入与多选批量导入保持上游行为（会把音频复制到应用私有目录），因为这两类文件选择器只提供临时读取授权。修改的完整清单与说明见 [NOTICE.md](NOTICE.md)。
 
@@ -39,9 +40,9 @@ Purely Music 是一款开源 Android 本地音乐播放器：导入设备中的�
 
 ## 获取应用
 
-前往本仓库的 [Releases](https://github.com/XDXxc95/pure_music_pro/releases/latest) 下载 `purelymusic.apk`，要求 **Android 8.0（API 26）或更高版本**。
+前往本仓库的 [Releases](https://github.com/XDXxc95/pure_music_pro/releases/latest) 下载安装包，要求 **Android 8.0（API 26）或更高版本**。Release 构建的产物名为 `purelymusic-<版本号>-release.apk`。
 
-该安装包为 debug 签名构建，与官方版本的签名不同，安装前需要先卸载已安装的官方版本；安装包内不含任何联网服务密钥。
+Release 安装包使用本仓库自建密钥签名，与官方版本、以及本仓库早期 debug 构建的签名都不同，安装前需要先卸载已安装的旧版本；安装包内不含任何联网服务密钥。
 
 ## 环境要求
 
@@ -69,6 +70,25 @@ Windows PowerShell：
 ```
 
 Debug 安装包输出到 `app/build/outputs/apk/debug/purelymusic.apk`。也可以直接用 Android Studio 打开仓库并运行 `app` 配置。首次构建需要联网下载 Gradle 发行版与依赖。
+
+### 可选：构建 Release 安装包
+
+Release 构建需要签名配置。在项目根目录创建 `keystore.properties`（已在 `.gitignore` 中忽略，请勿提交）：
+
+```properties
+storeFile=../keystore/release.jks
+storePassword=你的密钥库口令
+keyAlias=你的别名
+keyPassword=你的密钥口令
+```
+
+其中 `storeFile` 相对 `app/` 模块目录解析。配置后执行：
+
+```bash
+./gradlew assembleRelease
+```
+
+产物为 `app/build/outputs/apk/release/purelymusic-3.1-release.apk`（`signingConfig` 已绑定到 `release`，启用 R8 代码与资源压缩）。缺少 `keystore.properties` 时 `assembleRelease` 会产出未签名包。
 
 ### 可选：配置联网服务
 

@@ -11,10 +11,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -47,16 +47,16 @@ import com.music.purelymusic.ui.theme.AMPlayerTheme
 
 /** Keep this object as the sole editable source for the first-launch update sheet. */
 object ReleaseNotes {
-    const val version = "3.0"
+    const val version = "3.1"
     val zhHighlights = listOf(
-        Triple(Icons.Default.AutoAwesome, "Liquid Glass 视觉系统", "导航、播放条与核心控件，换上轻盈的玻璃材质与触感反馈。"),
-        Triple(Icons.Default.Translate, "歌词翻译，更完整", "自动补翻遗漏的句子，让每一行歌词都跟得上。"),
-        Triple(Icons.Default.GraphicEq, "声音，更合你的心意", "新增均衡器场景预设，频段调节也更直观。")
+        Triple(Icons.Default.CreateNewFolder, "导入文件夹", "选定文件夹即可递归导入：零复制映射原文件，并按子文件夹自动生成播放列表、识别同目录歌词。"),
+        Triple(Icons.Default.Speed, "播放倍速", "全屏播放器新增 0.5× 至 3× 七档倍速，音调不变，设置自动记住。"),
+        Triple(Icons.Default.AutoAwesome, "Liquid Glass 视觉系统", "导航、播放条与核心控件，换上轻盈的玻璃材质与触感反馈。")
     )
     val enHighlights = listOf(
-        Triple(Icons.Default.AutoAwesome, "Meet Liquid Glass", "Lighter glass surfaces and tactile feedback for navigation, now playing, and controls."),
-        Triple(Icons.Default.Translate, "Every lyric, translated", "Automatic retries fill in missing lines so you can follow every word."),
-        Triple(Icons.Default.GraphicEq, "Find your sound", "New equalizer presets and clearer controls to tune every band.")
+        Triple(Icons.Default.CreateNewFolder, "Import a whole folder", "Pick a folder and it is mapped without copying; playlists are created from subfolder names and matching .lrc files are picked up."),
+        Triple(Icons.Default.Speed, "Playback speed", "Seven speeds from 0.5x to 3x in the full-screen player, pitch preserved and remembered."),
+        Triple(Icons.Default.AutoAwesome, "Meet Liquid Glass", "Lighter glass surfaces and tactile feedback for navigation, now playing, and controls.")
     )
 }
 
